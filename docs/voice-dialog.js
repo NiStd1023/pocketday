@@ -1,3 +1,4 @@
+import {esc} from './model.js';
 import {icon} from './icons.js';
 import {parseSpeech} from './voice-parser.js';
 import {speechEngine,localSupport,installLanguage,listen} from './voice-input.js';
@@ -8,7 +9,7 @@ function mountVoice(dialog,{context,review,saveRecord}){
  let preferAuto=false;try{preferAuto=localStorage.getItem('pocketday-voice-auto')==='yes'}catch{}
  const wave='<span class="voice-wave" aria-hidden="true">'+[5,11,19,12,26,38,21,12,8].map((n,i)=>`<i style="--h:${n}px;--delay:${i*.08}s"></i>`).join('')+'</span>';
  const body=dialog.querySelector('.dialog-body');
- body.innerHTML=`<div class="voice-form"><div class="voice-destination">${icon('book',15)} 我的帳本</div>
+ body.innerHTML=`<div class="voice-form"><div class="voice-destination">${icon('book',15)} ${esc(context.meta.name)}</div>
  <section class="voice-capture"><button type="button" id="listenButton" class="voice-start"><span class="voice-art">${wave}<span class="voice-mic">${icon('mic',26)}</span>${wave}</span><span id="listenLabel" class="listen-label">檢查麥克風支援</span></button>
  <p id="modeNote"></p><button id="otherMode" class="voice-link" type="button" hidden>改用瀏覽器語音服務</button></section>
  <label class="field" for="voiceText">聽寫內容</label>

@@ -32,7 +32,3 @@ export function validate(b){
  for(const g of b.goals)if(!textOk(g.name,60)||!isCash(g.target)||!isCash(g.saved,true)||!['travel','plant','savings'].includes(g.theme))fail();
  return b
 }
-let dbPromise;
-function db(){if(!dbPromise)dbPromise=new Promise((resolve,reject)=>{const request=indexedDB.open('pocketday-local-v1',1);request.onupgradeneeded=()=>request.result.createObjectStore('books');request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error)});return dbPromise}
-export async function readBook(key){const conn=await db();return new Promise((resolve,reject)=>{const t=conn.transaction('books','readwrite'),s=t.objectStore('books'),r=s.get(key);let val;r.onsuccess=()=>{val=r.result;if(!val){val={rev:0,data:key==='demo'?demoBook():emptyBook()};s.put(val,key)}};t.oncomplete=()=>resolve(val);t.onabort=()=>reject(t.error)})}
-export async function commit(key,rev,change){const conn=await db();return new Promise((resolve,reject)=>{const t=conn.transaction('books','readwrite'),s=t.objectStore('books'),r=s.get(key);let val,err;r.onsuccess=()=>{try{val=r.result;if(!val||val.rev!==rev)throw Error('帳本已在另一個視窗更新，請重新開啟並確認。');const b=change(val.data)||val.data;val={rev:rev+1,data:validate(b)};s.put(val,key)}catch(e){err=e;t.abort()}};t.oncomplete=()=>resolve(val);t.onabort=()=>reject(err||t.error||Error('裝置無法儲存，請檢查可用空間。'))})}

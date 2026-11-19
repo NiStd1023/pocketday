@@ -1,13 +1,19 @@
-import {palette,uid,money,cents,dateStr,monthNow,labelMonth,esc,emptyBook,monthly,total,breakdown,validate,readBook,commit} from './model.js';
+import {listBooks, readBook, commit, createBook, editBook, deleteBook} from './ledger-store.js';
+import {bookMark, bookShelf, bookEditor, exportButtons, deleteReview, deleteFinal} from './book-ui.js';
+import {downloadBook, importBook} from './book-backup.js';
+import {palette,uid,money,cents,dateStr,monthNow,labelMonth,esc,monthly,total,breakdown} from './model.js';
 import {icon} from './icons.js';
 import {scanReceipt} from './scan.js';
 import {mountVoice} from './voice-dialog.js';
 
 const $=s=>document.querySelector(s),app=$('#app'),modal=$('#modal');
-const names={overview:'帳本總覽',records:'收支明細',goals:'理財目標',categories:'分類管理',backup:'資料備份'};
-const descriptions={overview:'查看本月收支、消費分布與儲蓄進度。',records:'按月份查找、編輯與管理每一筆紀錄。',goals:'為想做的事，慢慢存下一筆錢。',categories:'整理收入與支出使用的分類。',backup:'匯出完整帳本，或從備份還原歷史紀錄。'};
+const names={overview:'帳本總覽',records:'收支明細',goals:'理財目標',categories:'分類管理',books:'帳本管理',backup:'資料備份'};
+const descriptions={overview:'查看本月收支、消費分布與儲蓄進度。',records:'按月份查找、編輯與管理每一筆紀錄。',goals:'為想做的事，慢慢存下一筆錢。',categories:'整理收入與支出使用的分類。',books:'建立與切換帳本，各自記錄收支、分類與理財目標。',backup:'匯出目前帳本，或從 JSON、CSV 備份還原。'};
 let bookKey,book,rev,view=Object.hasOwn(names,location.hash.slice(1))?location.hash.slice(1):'overview',month=monthNow(),chartType='expense',catType='expense',filterType='all',filterCat='',search='',page=1,drawer=false,installPrompt,cleanup=null,toastTimer,selectedGoal=0;
-const bookLabel=k=>k==='demo'?'示範帳本':'我的帳本';
+let catalog=[], selection=0, bookEdit=null, pendingDelete=null, importContext=null;
+const metaFor=k=>catalog.find(meta=>meta.id===k);
+const bookText=k=>metaFor(k)?.name || '';
+const bookLabel=k=>esc(bookText(k));
 const byId=(a,id)=>a.find(x=>x.id===id);
 const btn=(action,label,ico='',cl='secondary',attrs='')=>`<button type="button" class="btn ${cl}" data-act="${action}" ${attrs}>${ico?icon(ico,18):''}${label}</button>`;
 const iconBtn=(a,label,ico,attrs='')=>`<button type="button" class="iconbtn" aria-label="${label}" title="${label}" data-act="${a}" ${attrs}>${icon(ico,17)}</button>`;
@@ -45,31 +51,64 @@ function recordList(){const rows=filtered(),n=Math.max(1,Math.ceil(rows.length/2
 function records(){return `<section class="panel">${filters()}<div id="recordList">${recordList()}</div></section>`}
 function goals(){return book.goals.length?`<div class="goals-grid">${book.goals.map(g=>`<article class="panel goal-card">${goalInner(g)}<div class="goal-actions">${btn('deposit','存一筆','add','soft',`data-id="${g.id}"`)}${btn('editGoal','編輯目標','edit','textbtn',`data-id="${g.id}"`)}</div></article>`).join('')}</div>`:`<section class="panel empty">${icon('flag',40)}<h3>你想為什麼存錢？</h3><p>設定目標金額，記下每次存入的進度。</p>${btn('newGoal','建立目標','add','primary')}</section>`}
 function categories(){return `<section class="panel"><div class="panel-top"><h2>收支分類</h2>${tabs(catType,'catType',two)}</div><div class="category-grid">${book.categories.filter(c=>c.type===catType).map(c=>`<button class="category-tile" data-act="editCat" data-id="${c.id}"><span class="cat-icon" style="--c:${c.color}">${icon(c.icon)}</span><span><b>${esc(c.name)}</b><small>${book.records.filter(r=>r.cat===c.id).length} 筆紀錄</small></span>${icon('edit',16)}</button>`).join('')}</div></section>`}
-function backups(){return `<div class="backup-grid"><section class="panel action-card"><span class="card-ico">${icon('download',26)}</span><h2>匯出帳本</h2><p>下載「${bookLabel(bookKey)}」的 JSON 備份，包含收支紀錄、品項、分類與理財目標。</p>${btn('export','匯出 JSON','download','primary')}</section><section class="panel action-card"><span class="card-ico mint">${icon('upload',26)}</span><h2>匯入備份</h2><p>選取小日帳備份檔，核對筆數後還原至目前帳本。</p>${btn('import','選擇備份檔','upload')}<input type="file" id="importFile" accept=".json,application/json" hidden></section></div><section class="panel note-card">${icon('shield',22)}<div><b>資料保存在這個瀏覽器</b><p>清除網站資料或更換裝置前，請先匯出備份。在共用裝置上，可以使用各自的瀏覽器使用者設定檔。</p></div></section>`}
-function navItem(k){return `<button data-act="nav" data-key="${k}" class="nav-link ${view===k?'active':''}" ${view===k?'aria-current="page"':''}>${icon(k,19)}${names[k]}</button>`}
+function backups(){return `<div class="backup-grid"><section class="panel action-card"><span class="card-ico">${icon('download',26)}</span><h2>匯出帳本</h2><p>下載「${bookLabel(bookKey)}」的收支、發票品項、分類、理財目標及圖標。CSV 可用試算表閱讀。</p>${exportButtons()}</section><section class="panel action-card"><span class="card-ico mint">${icon('upload',26)}</span><h2>匯入備份</h2><p>選取小日帳 JSON 或 CSV 備份，核對後可建立新帳本或還原至目前帳本。</p>${btn('import','選擇備份檔','upload')}<input type="file" id="importFile" accept=".json,.csv,text/csv,application/json" hidden></section></div><section class="panel note-card">${icon('shield',22)}<div><b>資料保存在這個瀏覽器</b><p>清除網站資料或更換裝置前，請先匯出要保留的帳本。</p></div></section>`}
+function booksView(){return bookShelf(catalog,bookKey)}
+function navItem(k){return `<button data-act="nav" data-key="${k}" class="nav-link ${view===k?'active':''}" ${view===k?'aria-current="page"':''}>${icon(k==='books'?'book':k,19)}${names[k]}</button>`}
 function render(){
- const actions=view==='overview'||view==='records'?btn('voice','語音記帳','mic')+btn('scan','掃描發票','scan')+btn('newRecord','記一筆','add','primary'):view==='goals'?btn('newGoal','新增目標','add','primary'):view==='categories'?btn('newCat','新增分類','add','primary'):'';
- app.innerHTML=`<div class="shell">${drawer?'<button class="scrim" aria-label="關閉選單" data-act="menu"></button>':''}<aside class="sidebar ${drawer?'open':''}"><a class="brand" href="#overview" data-act="nav" data-key="overview"><span class="brand-logo">${icon('book',26)}</span><span><b>小日帳</b><small>Pocketday</small></span></a><div class="nav-label">工作空間</div><nav aria-label="主要導覽">${['overview','records','goals'].map(navItem).join('')}<div class="nav-line"></div><div class="nav-label">管理工具</div>${['categories','backup'].map(navItem).join('')}</nav><div class="side-bottom"><button class="install-link" data-act="install">${icon('install',18)}安裝應用程式</button><button class="book-switch" data-act="switch"><span class="book-avatar">${icon('book',20)}</span><span><b>${bookLabel(bookKey)}</b><small>${bookKey==='demo'?'範例資料 · 可切換帳本':'個人帳本 · 裝置儲存'}</small></span>${icon('down',15)}</button></div></aside><div class="workspace"><header class="topbar"><div class="breadcrumbs">${iconBtn('menu','開啟選單','menu')}<span class="bread-desktop">${icon('book',15)} <button class="crumb-book" data-act="switch">${bookLabel(bookKey)}</button> <em>/</em></span><b>${names[view]}</b><button class="mobile-book" data-act="switch">${bookLabel(bookKey)}</button></div><div class="top-controls"><span class="local">${icon('shield',15)}本機儲存</span>${['overview','records'].includes(view)?monthBtn():''}</div></header><main id="main"><div class="page-head"><div><h1>${names[view]}</h1><p>${descriptions[view]}</p></div><div class="head-actions">${actions}</div></div>${({overview,records,goals,categories,backup:backups}[view])()}<footer><span class="footer-mark">${icon('book',14)} Pocketday</span><span>幣別 TWD · 新台幣</span></footer></main></div></div>`;
+ if(!book || !metaFor(bookKey)){
+   app.innerHTML=`<main id="main" class="ledger-empty-shell"><span class="brand-logo">${icon('book',26)}</span><h1>帳本管理</h1><div class="head-actions">${btn('newBook','建立帳本','add','primary')}</div>${booksView()}</main>`;return
+ }
+ const actions=view==='overview'||view==='records'?btn('voice','語音記帳','mic')+btn('scan','掃描發票','scan')+btn('newRecord','記一筆','add','primary'):view==='goals'?btn('newGoal','新增目標','add','primary'):view==='categories'?btn('newCat','新增分類','add','primary'):view==='books'?btn('newBook','建立帳本','add','primary'):'';
+ app.innerHTML=`<div class="shell">${drawer?'<button class="scrim" aria-label="關閉選單" data-act="menu"></button>':''}<aside class="sidebar ${drawer?'open':''}"><a class="brand" href="#overview" data-act="nav" data-key="overview"><span class="brand-logo">${icon('book',26)}</span><span><b>小日帳</b><small>Pocketday</small></span></a><div class="nav-label">工作空間</div><nav aria-label="主要導覽">${['overview','records','goals'].map(navItem).join('')}<div class="nav-line"></div><div class="nav-label">管理工具</div>${['books','categories','backup'].map(navItem).join('')}</nav><div class="side-bottom"><button class="install-link" data-act="install">${icon('install',18)}安裝應用程式</button><button class="book-switch" data-act="switch">${bookMark(metaFor(bookKey))}<span><b>${bookLabel(bookKey)}</b><small>切換帳本</small></span>${icon('down',15)}</button></div></aside><div class="workspace"><header class="topbar"><div class="breadcrumbs">${iconBtn('menu','開啟選單','menu')}<span class="bread-desktop"><button class="crumb-book" data-act="switch">${bookLabel(bookKey)}</button> <em>/</em></span><b>${names[view]}</b><button class="mobile-book" data-act="switch">${bookLabel(bookKey)}</button></div><div class="top-controls"><span class="local">${icon('shield',15)}本機儲存</span>${['overview','records'].includes(view)?monthBtn():''}</div></header><main id="main"><div class="page-head"><div><h1>${names[view]}</h1><p>${descriptions[view]}</p></div><div class="head-actions">${actions}</div></div>${({overview,records,goals,categories,backup:backups,books:booksView}[view])()}<footer><span class="footer-mark">${icon('book',14)} Pocketday</span><span>幣別 TWD · 新台幣</span></footer></main></div></div>`;
 }
 
 
-let ctx=null,monthYear=Number(month.slice(0,4)),cameraStream=null,scanCtrl=null,channel;
+let scanContext=null,ctx=null,monthYear=Number(month.slice(0,4)),cameraStream=null,scanCtrl=null,channel;
 const cashAttr='type="number" inputmode="decimal" min="0.01" max="999999999.99" step="0.01" required';
 const field=(label,html)=>`<label class="field">${label}${html}</label>`;
 const forms=(id,inner,actions)=>`<form id="${id}">${inner}<div class="form-error" role="alert"></div><div class="dialog-actions">${actions}</div></form>`;
 const saveBtn=(name='儲存')=>`<button type="submit" class="btn primary">${name}</button>`;
 const cancelBtn=()=>btn('close','取消');
 const err=e=>{const el=modal.open&&modal.querySelector('.form-error');if(el){el.textContent=e.message||String(e);el.scrollIntoView({block:'nearest'})}else toast(e.message||String(e))};
-async function target(newEntry=false){const key=newEntry?'personal':bookKey;const val=key===bookKey?{data:book,rev}:await readBook(key);return {key,...val}}
-async function save(context,fn,message){const result=await commit(context.key,context.rev,fn);bookKey=context.key;book=result.data;rev=result.rev;localStorage.setItem('pocketday-book',bookKey);channel?.postMessage(bookKey);closeDialog();render();toast(message)}
-async function selectBook(key){const res=await readBook(key);book=res.data;rev=res.rev;bookKey=key;localStorage.setItem('pocketday-book',key);selectedGoal=0;filterCat='';page=1;search='';drawer=false;closeDialog();render()}
+function target(){if(!book)throw Error('請先建立或選擇帳本。');return {key:bookKey,data:book,rev,meta:metaFor(bookKey)}}
+async function save(context,fn,message){
+ const result=await commit(context.key,context.rev,fn);
+ channel?.postMessage(context.key);
+ if(bookKey===context.key){book=result.data;rev=result.rev;closeDialog();render();toast(message)}
+}
+async function selectBook(key){
+ const request=++selection;
+ if(!key){book=null;bookKey=null;localStorage.removeItem('pocketday-book');closeDialog();render();return}
+ const res=await readBook(key);
+ if(request!==selection)return;
+ book=res.data;rev=res.rev;bookKey=key;localStorage.setItem('pocketday-book',key);
+ selectedGoal=0;filterCat='';filterType='all';catType='expense';chartType='expense';page=1;search='';month=monthNow();drawer=false;closeDialog();render()
+}
+async function reloadCatalog(){
+ catalog=await listBooks();
+ if(!metaFor(bookKey)){
+   const key=metaFor(localStorage.getItem('pocketday-book'))?.id || metaFor('demo')?.id || catalog[0]?.id;
+   await selectBook(key);
+ }else{render()}
+}
+async function refreshOther(key){
+ if(key==='@catalog'){
+   await reloadCatalog();
+   if(modal.open && (modal.querySelector('.book-option') || modal.querySelector('#bookForm') || pendingDelete && modal.querySelector('.delete-review, #deleteBookForm'))){closeDialog();toast('帳本清單已更新，請重新開啟。')}
+   return
+ }
+ if(!bookKey||key!==bookKey)return;
+ try{const d=await readBook(key);if(bookKey!==key||d.rev<=rev)return;book=d.data;rev=d.rev;render();if(modal.open)toast('帳本已在其他視窗更新，請重新核對。')}
+ catch{await reloadCatalog()}
+}
+function signalCatalog(){channel?.postMessage('@catalog');try{localStorage.setItem('pocketday-catalog-update',uid())}catch{}}
 function navigate(k){if(!Object.hasOwn(names,k))return;drawer=false;view=k;history.replaceState(null,'','#'+k);render();window.scrollTo({top:0})}
-function showSwitch(){drawer=false;render();openDialog('切換帳本',['personal','demo'].map(k=>`<button class="book-option ${bookKey===k?'selected':''}" data-act="book" data-key="${k}">${icon('book',23)}<span><b>${bookLabel(k)}</b><small>${k==='demo'?'用範例資料試用圖表與儲蓄目標':'記錄自己的收支與理財目標'}</small></span>${bookKey===k?icon('check',18):''}</button>`).join(''))}
+function showSwitch(){drawer=false;render();openDialog('切換帳本',catalog.map(meta=>`<button class="book-option ${bookKey===meta.id?'selected':''}" data-act="book" data-key="${meta.id}">${bookMark(meta)}<span><b>${esc(meta.name)}</b></span>${bookKey===meta.id?icon('check',18):''}</button>`).join('')+`<div class="dialog-actions book-selection-actions">${btn('manageBooks','帳本管理','book')}${btn('newBook','建立帳本','add','primary')}</div>`)}
 function showMonth(){openDialog('選擇統計月份',`<div class="month-year">${iconBtn('yearBack','上一年','left')}<b>${monthYear} 年</b>${iconBtn('yearNext','下一年','right')}</div><div class="month-grid">${Array.from({length:12},(_,i)=>{const key=monthYear+'-'+String(i+1).padStart(2,'0');return `<button class="${key===month?'chosen':''}" data-act="setMonth" data-key="${key}">${i+1} 月</button>`}).join('')}</div><div class="dialog-actions">${btn('setMonth','回到本月','calendar','secondary',`data-key="${monthNow()}"`)}</div>`)}
 function catsOptions(categories,type,sel){return categories.filter(c=>c.type===type).map(c=>`<option value="${c.id}" ${c.id===sel?'selected':''}>${esc(c.name)}</option>`).join('')}
 function itemRow(i={name:'',amount:null}){return `<div class="item-line"><input class="item-name" aria-label="品項名稱" placeholder="品項名稱" required maxlength="120" value="${esc(i.name)}"><input class="item-amount" aria-label="品項小計" placeholder="小計" type="number" min="0" max="999999999.99" step=".01" required value="${i.amount==null?'':i.amount/100}">${iconBtn('dropItem','移除品項','close')}</div>`}
 async function recordForm(id='',draft=null,context=null){
- ctx=context||await target(!id);
+ ctx=context||await target();
  const r=id?byId(ctx.data.records,id):null,initial=r||draft||{},type=initial.type||'expense',items=initial.items||[];
  const voice=draft?.origin==='voice';
  let info='';
@@ -91,24 +130,24 @@ async function recordSubmit(f,allowDuplicate=false){const fd=new FormData(f),id=
 }
 async function saveLedgerRecord(context,record){
  const before=month;month=record.date.slice(0,7);
- try{await save(context,b=>{const idx=b.records.findIndex(x=>x.id===record.id);if(idx<0)b.records.push(record);else b.records[idx]=record},'已儲存至'+bookLabel(context.key))}
+ try{await save(context,b=>{const idx=b.records.findIndex(x=>x.id===record.id);if(idx<0)b.records.push(record);else b.records[idx]=record},'已儲存至'+bookText(context.key))}
  catch(e){month=before;throw e}
 }
 async function voiceEntry(){
- const context=await target(true);
+ const context=await target();
  openDialog('語音記帳','');
  cleanup=mountVoice(modal,{context,review:(draft,ctx)=>recordForm('',draft,ctx),saveRecord:async(draft,ctx)=>{
   const record={id:uid(),title:draft.title,date:draft.date,type:draft.type,cat:draft.cat,amount:draft.amount,invoice:'',items:[],created:Date.now()};
   await saveLedgerRecord(ctx,record);
   const category=byId(ctx.data.categories,record.cat);
-  openDialog('已記入我的帳本',`<div class="voice-saved"><span class="voice-saved-icon">${icon('check',25)}</span><h3>${esc(record.title)}</h3><strong>NT$ ${money(record.amount)}</strong><p>${esc(record.date)} · ${esc(category.name)} · ${record.type==='expense'?'支出':'收入'}</p></div><div class="dialog-actions">${btn('editRecord','編輯這筆','edit','secondary',`data-id="${record.id}"`)}${btn('close','完成','','primary')}</div>`);
+  openDialog('已記入「'+bookLabel(ctx.key)+'」',`<div class="voice-saved"><span class="voice-saved-icon">${icon('check',25)}</span><h3>${esc(record.title)}</h3><strong>NT$ ${money(record.amount)}</strong><p>${esc(record.date)} · ${esc(category.name)} · ${record.type==='expense'?'支出':'收入'}</p></div><div class="dialog-actions">${btn('editRecord','編輯這筆','edit','secondary',`data-id="${record.id}"`)}${btn('close','完成','','primary')}</div>`);
  }});
 
 }
 function itemCheck(){const f=$('#recordForm'),el=$('#itemCheck');if(!f||!el)return;const items=[...f.querySelectorAll('.item-amount')],sum=items.reduce((a,i)=>a+cents(i.value||0),0);el.textContent=items.length?'品項合計 NT$ '+money(sum)+(sum===cents(f.elements.amount.value)?'，與總金額相符。':'，請核對折扣、稅額或未辨識的品項。'):''}
 function confirmDelete(kind,id,label){const actions=btn('cancelDelete','保留紀錄')+btn('doDelete','確認刪除','trash','danger',`data-key="${kind}" data-id="${id}"`);openDialog('刪除確認',`<p>確定刪除「${esc(label)}」？</p><p class="helper" style="margin:8px 0 16px">刪除後可使用先前匯出的備份還原。</p><div class="dialog-actions">${actions}</div><p class="form-error" role="alert"></p>`)}
 async function catForm(id=''){
- ctx=await target(!id);const c=id?byId(ctx.data.categories,id):null,type=c?.type||catType;
+ ctx=await target();const c=id?byId(ctx.data.categories,id):null,type=c?.type||catType;
  const colors=`<div class="field">分類顏色<div class="swatches">${palette.map((p,i)=>`<label><input type="radio" name="color" aria-label="${['珊瑚橘','青綠','霧藍','紫色','金黃','灰藍','粉紅','湖藍'][i]}" value="${p}" ${p===(c?.color||palette[0])?'checked':''}><span style="--c:${p}"></span></label>`).join('')}</div></div>`;
  openDialog(id?'編輯分類':'新增分類',forms('catForm',`<p class="book-hint">${bookLabel(ctx.key)}</p><input type="hidden" name="id" value="${id}">`+
  field('類型',id?`<input type="hidden" name="type" value="${type}"><span class="helper">${type==='income'?'收入':'支出'}</span>`:`<select name="type">${two.map(([v,l])=>`<option value="${v}" ${type===v?'selected':''}>${l}</option>`).join('')}</select>`)+
@@ -119,7 +158,7 @@ function deleteCategory(id){const c=byId(ctx.data.categories,id),others=ctx.data
  openDialog('刪除分類',forms('removeCatForm',`<input type="hidden" name="id" value="${id}"><p>確定刪除「${esc(c.name)}」？</p>`+(used?field(`將既有 ${used} 筆紀錄移至`, `<select name="newId">${catsOptions(others,c.type,'')}</select>`):''),cancelBtn()+saveBtn('確認刪除分類')))
 }
 async function goalForm(id=''){
- ctx=await target(!id);const g=id?byId(ctx.data.goals,id):null;
+ ctx=await target();const g=id?byId(ctx.data.goals,id):null;
  openDialog(id?'編輯理財目標':'新增理財目標',forms('goalForm',`<p class="book-hint">${bookLabel(ctx.key)}</p><input name="id" type="hidden" value="${id}">`+
  field('目標名稱',`<input name="name" maxlength="60" required placeholder="例如：日本旅行基金" value="${esc(g?.name)}">`)+
  `<div class="form-row">${field('目標金額（NT$）',`<input name="target" ${cashAttr} value="${g?g.target/100:''}" placeholder="50000">`)}${field('已存金額（NT$）',`<input name="saved" type="number" min="0" max="999999999.99" step="0.01" required value="${g?g.saved/100:0}">`)}</div>`+
@@ -127,21 +166,55 @@ async function goalForm(id=''){
 }
 async function deposit(id){ctx=await target();const g=byId(ctx.data.goals,id);openDialog('存一筆',forms('depositForm',`<input name="id" type="hidden" value="${id}"><div class="form-note">${bookLabel(ctx.key)} · ${esc(g.name)}<br>目前已存 NT$ ${money(g.saved)} ／ ${money(g.target)}</div>`+field('本次存入（NT$）',`<input ${cashAttr} name="amount" placeholder="0">`)+`<p class="helper">存入金額只更新目標進度，當月收支會依帳本紀錄計算。</p>`,cancelBtn()+saveBtn('確認存入')))}
 function goalDetail(id){const g=byId(book.goals,id);openDialog('目標進度',`${goalInner(g)}<div class="goal-actions">${btn('editGoal','編輯目標','edit','secondary',`data-id="${id}"`)}${btn('deposit','存一筆','add','primary',`data-id="${id}"`)}</div>`)}
-function exportData(){const blob=new Blob([JSON.stringify({app:'pocketday',version:1,exportedAt:new Date().toISOString(),book:book},null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`小日帳-${bookLabel(bookKey)}-${dateStr()}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);toast('已產生帳本備份檔')}
-let imported=null;
-async function importData(file){if(!file)return;if(file.size>32*1024*1024)throw Error('備份檔超過 32 MB，請選擇較小的檔案。');let x;try{x=JSON.parse(await file.text())}catch{throw Error('無法讀取 JSON，請選擇有效的小日帳備份。')}
- if(x?.app!=='pocketday'||x.version!==1)throw Error('無法辨識備份版本，請選擇小日帳 JSON 檔。');imported=validate(x.book);ctx=await target();openDialog('核對匯入內容',`<p><b>${esc(file.name)}</b></p><p class="helper" style="margin:12px 0">包含 ${imported.records.length} 筆紀錄、${imported.categories.length} 個分類及 ${imported.goals.length} 個理財目標。</p><p class="form-note">還原會取代「${bookLabel(bookKey)}」現有的 ${book.records.length} 筆紀錄及所有分類、目標。</p><div class="dialog-actions" style="margin-top:18px">${cancelBtn()}${btn('restore','確認取代並還原','upload','primary')}</div><div class="form-error"></div>`)}
+function startBookForm(meta=null){
+ bookEdit=meta;
+ openDialog(meta?'編輯帳本':'建立帳本',bookEditor(meta || {name:'',icon:'📒',color:palette[0]},meta?'儲存變更':'建立帳本'));
+}
+function updateBookPreview(form){
+ const mark=form.querySelector('.ledger-mark');
+ mark.textContent=form.elements.icon.value;
+ mark.style.setProperty('--ledger-color',form.elements.color.value);
+ form.querySelector('#bookPreviewName').textContent=form.elements.name.value.trim() || '帳本預覽';
+ form.querySelectorAll('[data-act="pickIcon"]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.icon===form.elements.icon.value)));
+}
+async function created(meta){
+ catalog=await listBooks();await selectBook(meta.id);navigate('overview');signalCatalog();toast('已建立「'+meta.name+'」');
+}
+async function reviewDelete(key){
+ pendingDelete=await readBook(key);
+ openDialog('刪除帳本 · 第一次確認',deleteReview(pendingDelete));
+}
+function doExport(format,snapshot){
+ downloadBook(format,snapshot.meta,snapshot.data,dateStr());
+ toast('已產生「'+snapshot.meta.name+'」的 '+format.toUpperCase()+' 備份');
+}
+let imported=null, importingNew=false;
+async function importData(file){
+ if(!file)return;
+ const destination=importContext;
+ if(file.size>32*1024*1024)throw Error('備份檔超過 32 MB，請選擇較小的檔案。');
+ const pending=importBook(await file.text(),/\.csv$/i.test(file.name));
+ if(destination && destination.key!==bookKey)throw Error('目前帳本已切換，請重新選擇備份。');
+ imported=pending;ctx=destination;
+ let base=pending.meta?.name || '還原帳本',name=base,n=2;
+ while(catalog.some(c=>c.name===name)){const suffix=' ('+n+')';n+=1;name=base.slice(0,40-suffix.length)+suffix}
+ openDialog('核對匯入內容',forms('restoreForm',`<p><b>${esc(file.name)}</b></p><p class="helper">包含 ${pending.data.records.length} 筆紀錄、${pending.data.categories.length} 個分類及 ${pending.data.goals.length} 個理財目標。</p>`+
+ field('還原方式',`<select name="mode"><option value="new">建立新帳本</option>${destination&&!importingNew?`<option value="replace">取代「${bookLabel(destination.key)}」的資料</option>`:''}</select>`)+
+ field('新帳本名稱',`<input name="name" required maxlength="40" value="${esc(name)}">`)+
+ `<p class="form-note" id="restoreNote">將建立獨立帳本，並保留備份中的圖標。</p>`,cancelBtn()+saveBtn('建立並還原')));
+}
 function stopCamera(){cameraStream?.getTracks().forEach(t=>t.stop());cameraStream=null}
 function scanMenu(message=''){
+ scanContext=target();
  openDialog('掃描發票或帳單',`<div class="scan-box">${icon('scan',40)}<h3>將整張發票對準鏡頭</h3><p>保持紙面平整，讓品項、總額和 QR Code 清晰入鏡。</p></div>${message?`<p class="form-note" style="margin-top:12px">${esc(message)}</p>`:''}<div class="scan-buttons">${btn('camera','開啟鏡頭','camera','primary')}${btn('choosePhoto','選擇照片','photo')}</div><p class="helper" style="margin-top:15px;text-align:center">僅在裝置辨識，影像不會上傳或存入帳本。</p><input id="scanFile" type="file" accept="image/*" hidden><input id="systemCamera" type="file" accept="image/*" capture="environment" hidden>`);
 }
 async function camera(){if(!navigator.mediaDevices?.getUserMedia){$('#systemCamera').click();return}
  const token={active:true};cleanup=()=>{token.active=false;stopCamera()};
  try{const stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1440}}});if(!token.active||!modal.open){stream.getTracks().forEach(t=>t.stop());return}cleanup=null;cameraStream=stream;openDialog('拍攝發票',`<video class="scan-video" autoplay muted playsinline></video><div class="scan-buttons">${btn('scan','返回')}${btn('capture','拍照辨識','camera','primary')}</div>`);cleanup=stopCamera;const v=modal.querySelector('video');v.srcObject=stream;await v.play()}
  catch(e){if(token.active&&modal.open){scanMenu('未能開啟鏡頭。可在瀏覽器允許相機權限，或選取已拍攝的照片。');const x=modal.querySelector('.scan-buttons');x.insertAdjacentHTML('afterend',`<div class="scan-buttons">${btn('systemPhoto','使用裝置相機','camera','soft')}</div>`)}}}
-async function recognize(file){if(!file)return;stopCamera();openDialog('辨識發票',`<div class="scan-status"><div class="spin"></div><p id="scanProgress" role="status">正在準備影像…</p></div><div class="dialog-actions">${btn('close','取消辨識')}</div>`);const ctrl=new AbortController();scanCtrl=ctrl;cleanup=()=>ctrl.abort();
- try{let result=await scanReceipt(file,msg=>{if($('#scanProgress')&&!ctrl.signal.aborted)$('#scanProgress').textContent=msg},ctrl.signal);if(ctrl.signal.aborted)return;cleanup=null;await recordForm('',result)}catch(e){if(ctrl.signal.aborted)return;cleanup=null;scanMenu('這張影像未能完成辨識。請換一張清晰的照片，或手動記錄。');modal.querySelector('.scan-buttons').insertAdjacentHTML('afterend',`<div class="scan-buttons">${btn('newRecord','手動記帳','edit','soft')}</div>`)}}
-async function capturePhoto(){const v=modal.querySelector('video');if(!v?.videoWidth)throw Error('鏡頭尚未就緒。');const c=document.createElement('canvas');c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0);const img=await new Promise(ok=>c.toBlob(ok,'image/jpeg',.94));if(img&&modal.open)await recognize(img)}
+async function recognize(file){if(!file||!scanContext||scanContext.key!==bookKey)return;const destination=scanContext;stopCamera();openDialog('辨識發票',`<div class="scan-status"><div class="spin"></div><p id="scanProgress" role="status">正在準備影像…</p></div><div class="dialog-actions">${btn('close','取消辨識')}</div>`);const ctrl=new AbortController();scanCtrl=ctrl;cleanup=()=>ctrl.abort();
+ try{let result=await scanReceipt(file,msg=>{if($('#scanProgress')&&!ctrl.signal.aborted)$('#scanProgress').textContent=msg},ctrl.signal);if(ctrl.signal.aborted)return;cleanup=null;await recordForm('',result,destination)}catch(e){if(ctrl.signal.aborted)return;cleanup=null;scanMenu('這張影像未能完成辨識。請換一張清晰的照片，或手動記錄。');modal.querySelector('.scan-buttons').insertAdjacentHTML('afterend',`<div class="scan-buttons">${btn('newRecord','手動記帳','edit','soft')}</div>`)}}
+async function capturePhoto(){const v=modal.querySelector('video');if(!v?.videoWidth)throw Error('鏡頭尚未就緒。');const c=document.createElement('canvas');c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0);const img=await new Promise(ok=>c.toBlob(ok,'image/jpeg',.94));if(img&&v.isConnected&&modal.open)await recognize(img)}
 async function install(){drawer=false;render();if(matchMedia('(display-mode: standalone)').matches||navigator.standalone){toast('小日帳已在獨立視窗中開啟');return}if(installPrompt){const prompt=installPrompt;installPrompt=null;await prompt.prompt();const r=await prompt.userChoice;if(r.outcome==='accepted')toast('已送出安裝要求');return}
  openDialog('安裝小日帳',`<div class="form-group"><p><b>iPhone 或 iPad</b><br>在 Safari 開啟本頁，點「分享」，再選「加入主畫面」。</p><p><b>Android 或電腦</b><br>在支援的瀏覽器選單選擇「安裝應用程式」或「新增至主畫面」。</p><p class="form-note">請先連線開啟一次，讓離線資源下載完成。</p></div>`)}
 
@@ -150,6 +223,14 @@ document.addEventListener('click',async e=>{
  const b=e.target.closest('[data-act]');if(!b||b.disabled)return;e.preventDefault();const a=b.dataset.act,k=b.dataset.key,id=b.dataset.id;
  try{switch(a){
  case 'menu':drawer=!drawer;render();break;case 'nav':navigate(k);break;case 'switch':showSwitch();break;case 'book':await selectBook(k);break;
+ case 'manageBooks':closeDialog();navigate('books');break;
+ case 'openBook':await selectBook(k);navigate('overview');break;
+ case 'newBook':startBookForm();break;
+ case 'editBook':startBookForm(metaFor(k));break;
+ case 'pickIcon':{const f=b.closest('form');f.elements.icon.value=b.dataset.icon;updateBookPreview(f);break}
+ case 'removeBook':await reviewDelete(k);break;
+ case 'confirmBookName':if(pendingDelete && modal.querySelector('.delete-review'))openDialog('刪除帳本 · 最後確認',deleteFinal(pendingDelete.meta));break;
+ case 'beforeDeleteJson':case 'beforeDeleteCsv':if(pendingDelete && modal.querySelector('.delete-review'))doExport(a.endsWith('Csv')?'csv':'json',pendingDelete);break;
  case 'month':monthYear=Number(month.slice(0,4));showMonth();break;case 'yearBack':monthYear=Math.max(1,monthYear-1);showMonth();break;case 'yearNext':monthYear=Math.min(9999,monthYear+1);showMonth();break;case 'setMonth':month=k;page=1;closeDialog();render();break;
  case 'chart':chartType=k;render();break;case 'gotoGoals':navigate('goals');break;case 'gotoRecords':filterType='all';filterCat='';search='';page=1;navigate('records');break;
  case 'catRecords':filterCat=id;filterType=chartType;search='';page=1;navigate('records');break;case 'typeFilter':filterType=k;filterCat='';page=1;render();break;case 'prevPage':page=Math.max(1,page-1);render();break;case 'nextPage':page++;render();break;
@@ -162,25 +243,52 @@ document.addEventListener('click',async e=>{
  case 'doDelete':await save(ctx,data=>{data[k]=data[k].filter(x=>x.id!==id)},'已刪除');break;
  case 'catType':catType=k;render();break;case 'newCat':await catForm();break;case 'editCat':await catForm(id);break;case 'deleteCat':deleteCategory(id);break;
  case 'newGoal':await goalForm();break;case 'editGoal':await goalForm(id);break;case 'goalDetail':goalDetail(id);break;case 'deposit':await deposit(id);break;
- case 'export':exportData();break;case 'import':$('#importFile').click();break;case 'restore':await save(ctx,()=>imported,'已還原帳本備份');imported=null;break;
+ case 'exportJson':case 'exportCsv':{const id=bookKey;const current=await readBook(id);doExport(a==='exportCsv'?'csv':'json',current);break}
+ case 'import':importingNew=!book||view==='books';importContext=book?target():null;$('#importFile').click();break;
  case 'install':await install();break;case 'scan':scanMenu();break;case 'camera':await camera();break;case 'capture':await capturePhoto();break;case 'choosePhoto':$('#scanFile').click();break;case 'systemPhoto':$('#systemCamera').click();break;
  }}catch(e){err(e)}
 });
 document.addEventListener('submit',async e=>{if(!modal.contains(e.target))return;e.preventDefault();const f=e.target,d=new FormData(f),id=d.get('id'),submit=f.querySelector('[type=submit]');if(submit.disabled)return;submit.disabled=true;try{
+ if(f.id==='bookForm'){
+   const details={name:d.get('name'),icon:d.get('icon'),color:d.get('color')};
+   if(bookEdit){await editBook(bookEdit.id,bookEdit.version,details);catalog=await listBooks();closeDialog();render();signalCatalog();toast('已更新帳本名稱與圖標')}
+   else await created(await createBook(details));
+ }
+ if(f.id==='deleteBookForm' && pendingDelete){
+   const {meta,rev:version}=pendingDelete;
+   await deleteBook(meta,version,d.get('confirmName'));pendingDelete=null;closeDialog();await reloadCatalog();signalCatalog();toast('已刪除「'+meta.name+'」')
+ }
+ if(f.id==='restoreForm' && imported){
+   if(d.get('mode')==='new'){const info={icon:'📒',color:palette[0],...imported.meta,name:d.get('name')};await created(await createBook(info,imported.data))}
+   else if(ctx && ctx.key===bookKey){const data=imported.data;await save(ctx,()=>data,'已還原帳本資料')}
+   imported=null;
+ }
  if(f.getAttribute('id')==='recordForm')await recordSubmit(f);
  if(f.getAttribute('id')==='catForm'){const type=d.get('type'),name=d.get('name').trim();if(!name)throw Error('請輸入分類名稱。');if(ctx.data.categories.some(c=>c.type===type&&c.id!==id&&c.name===name))throw Error('同類型已有相同名稱的分類。');catType=type;await save(ctx,b=>{const c=byId(b.categories,id);if(c)Object.assign(c,{name,color:d.get('color')||c.color});else b.categories.push({id:uid(),type,name,color:d.get('color')||palette[0],icon:type==='income'?'coin':'categories'})},'已儲存分類')}
  if(f.getAttribute('id')==='removeCatForm')await save(ctx,b=>{b.categories=b.categories.filter(c=>c.id!==id);b.records.forEach(r=>{if(r.cat===id)r.cat=d.get('newId')})},'已刪除分類並保留收支紀錄');
  if(f.getAttribute('id')==='goalForm'){const g={id:id||uid(),name:d.get('name').trim(),theme:d.get('theme'),target:cents(d.get('target')),saved:cents(d.get('saved'))};if(!g.name)throw Error('請輸入目標名稱。');await save(ctx,b=>{const idx=b.goals.findIndex(x=>x.id===id);if(idx<0)b.goals.push(g);else b.goals[idx]=g},'已儲存理財目標')}
  if(f.getAttribute('id')==='depositForm'){const a=cents(d.get('amount')),g=byId(ctx.data.goals,id);await save(ctx,b=>{byId(b.goals,id).saved+=a},g.saved<g.target&&g.saved+a>=g.target?'目標達成！已記錄這次存入。':'已更新儲蓄進度')}
  }catch(e){err(e)}finally{submit.disabled=false}});
-document.addEventListener('input',e=>{if(e.target.closest('#recordForm'))itemCheck();if(e.target.id==='search'){search=e.target.value;page=1;$('#recordList').innerHTML=recordList()}});
-document.addEventListener('change',async e=>{try{if(e.target.id==='filterCat'){filterCat=e.target.value;page=1;$('#recordList').innerHTML=recordList()}if(e.target.id==='importFile'){const file=e.target.files[0];e.target.value='';await importData(file)}if(['scanFile','systemCamera'].includes(e.target.id)){const file=e.target.files[0];e.target.value='';await recognize(file)}}catch(e){err(e)}});
+document.addEventListener('input',e=>{
+ if(e.target.closest('#bookForm'))updateBookPreview(e.target.form);
+ if(e.target.name==='confirmName')e.target.form.querySelector('[type=submit]').disabled=e.target.value!==pendingDelete?.meta.name;
+ if(e.target.closest('#recordForm'))itemCheck();if(e.target.id==='search'){search=e.target.value;page=1;$('#recordList').innerHTML=recordList()}});
+document.addEventListener('change',async e=>{try{
+ if(e.target.name==='mode' && e.target.form?.id==='restoreForm'){
+   const f=e.target.form,replace=e.target.value==='replace';
+   f.elements.name.disabled=replace;f.elements.name.closest('label').hidden=replace;
+   f.querySelector('#restoreNote').textContent=replace?'將取代「'+bookText(ctx.key)+'」的全部收支、分類與目標，並保留目前的名稱與圖標。':'將建立獨立帳本，並保留備份中的圖標。';
+   f.querySelector('[type=submit]').textContent=replace?'確認取代並還原':'建立並還原';
+ }
+ if(e.target.id==='filterCat'){filterCat=e.target.value;page=1;$('#recordList').innerHTML=recordList()}if(e.target.id==='importFile'){const file=e.target.files[0];e.target.value='';await importData(file)}if(['scanFile','systemCamera'].includes(e.target.id)){const file=e.target.files[0];e.target.value='';await recognize(file)}}catch(e){err(e)}});
 window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installPrompt=e});window.addEventListener('appinstalled',()=>{installPrompt=null;toast('小日帳已安裝')});window.addEventListener('pagehide',()=>{stopCamera();scanCtrl?.abort()});
 window.addEventListener('hashchange',()=>{if(Object.hasOwn(names,location.hash.slice(1)))navigate(location.hash.slice(1))});
 window.addEventListener('keydown',e=>{if(e.key==='Escape'&&drawer){drawer=false;render()}});
 async function init(){try{
- bookKey=localStorage.getItem('pocketday-book')==='personal'?'personal':'demo';await selectBook(bookKey);
- if('BroadcastChannel' in window){channel=new BroadcastChannel('pocketday-updates');channel.onmessage=async e=>{if(e.data!==bookKey)return;const d=await readBook(bookKey);book=d.data;rev=d.rev;render();if(modal.open)toast('帳本已在其他視窗更新，請重新核對。')}}
+ window.addEventListener('pocketday-upgrade-blocked',()=>{app.innerHTML='<main class="ledger-empty-shell"><h1>正在升級帳本</h1><p>請關閉其他開啟小日帳的分頁或應用程式視窗，升級會自動繼續。</p></main>'});
+ await reloadCatalog();
+ if('BroadcastChannel' in window){channel=new BroadcastChannel('pocketday-updates');channel.onmessage=e=>refreshOther(e.data).catch(err)}
+ else window.addEventListener('storage',e=>{if(e.key==='pocketday-catalog-update')refreshOther('@catalog').catch(err)});
  if('serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>toast('此瀏覽器暫時無法啟用離線使用。'));
  }catch(e){app.innerHTML='<main><h1>無法開啟本機帳本</h1><p>請在允許網站儲存資料的瀏覽器中重新開啟小日帳。</p></main>'}}
 init();

@@ -37,3 +37,25 @@ dialog{width:min(510px,calc(100vw - 24px));border:1px solid #dce4e7;border-radiu
 @media(prefers-reduced-motion:reduce){.listening .voice-wave i{animation:none}}
 
 .voice-start{display:block;margin:0 auto;padding:0 8px;border-radius:10px}.voice-start:hover .voice-mic{background:#ffc5a7}
+
+/* Ledger management */
+.ledger-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(245px,100%),1fr));gap:18px}
+.ledger-card{padding:22px;min-width:0}
+.ledger-card-head,.ledger-preview,.ledger-actions,.current-book,.ledger-export,.ledger-counts,.glyph-options{display:flex;align-items:center;gap:10px}
+.ledger-card-head{justify-content:space-between}
+.ledger-mark{background:color-mix(in srgb,var(--ledger-color) 29%,white);border:1px solid color-mix(in srgb,var(--ledger-color) 46%,white);color:#223747;display:inline-flex;align-items:center;justify-content:center;border-radius:13px;width:48px;height:48px;flex:none;font-size:20px;line-height:1;overflow:hidden}
+.ledger-card h2,.ledger-preview b,.book-option b{overflow-wrap:anywhere}
+.ledger-card h2{font-size:19px;margin:15px 0 22px}.ledger-actions{border-top:1px solid var(--line);padding-top:13px}.ledger-actions .btn{margin-right:auto}
+.current-book{font-size:12px;color:#356858;background:#e7f2ed;padding:4px 8px;border-radius:12px;gap:4px}
+.book-trash:hover{color:#9e4637}.ledger-import{margin-top:18px}
+.ledger-preview{padding:16px;background:#f2f6f6;border-radius:12px;margin-bottom:14px}.ledger-preview b{font-size:18px}
+.ledger-form fieldset{border:0;padding:0;margin:0 0 14px;min-width:0}.ledger-form legend{font-weight:650;font-size:14px;margin-bottom:8px}
+.glyph-options,.ledger-export,.ledger-counts{flex-wrap:wrap}.glyph-options{gap:6px;margin-bottom:10px}
+.glyph-options button{border-radius:8px;border:1px solid var(--line);padding:5px;min-width:36px;min-height:36px;font-size:18px}.glyph-options button[aria-pressed=true]{border-color:#45766a;background:#ecf4f1}
+.ledger-counts{margin:12px 0 20px}.ledger-counts span{border-radius:7px;background:#eff3f4;padding:6px 9px;font-size:14px}
+.delete-review h3{font-size:16px;margin:12px 0 6px}.delete-review .ledger-export{margin:12px 0 26px}
+.ledger-export .btn{font-size:14px}.book-option .ledger-mark,.book-switch .ledger-mark{flex:0 0 35px;width:35px;height:35px;font-size:16px;border-radius:9px}
+.book-switch>span:nth-child(2),.breadcrumbs,.bread-desktop{min-width:0}.book-switch b,.crumb-book,.mobile-book{max-width:clamp(78px,15vw,170px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.book-option>span:not(.ledger-mark){min-width:0}.book-option{overflow-wrap:anywhere}.ledger-empty-shell{max-width:880px;margin:8vh auto;padding:20px}
+.ledger-empty-shell h1{margin-bottom:8px}.ledger-empty-shell .head-actions{margin:18px 0}.book-selection-actions{margin-top:16px}
+@media(max-width:560px){.ledger-grid{grid-template-columns:1fr;gap:12px}.ledger-card{padding:16px}.ledger-card h2{margin:10px 0 14px}.mobile-book{display:block;max-width:76px}.ledger-actions .iconbtn{min-width:40px;min-height:40px}.breadcrumbs{gap:5px}}
