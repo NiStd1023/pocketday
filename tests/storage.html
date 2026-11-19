@@ -1,0 +1,40 @@
+<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><title>帳本儲存測試</title><h1>帳本儲存測試</h1><pre id="results">執行中</pre><script type="module">
+import {createBook, editBook, deleteBook, readBook, listBooks, commit} from '../docs/ledger-store.js';
+import {emptyBook} from '../docs/model.js';
+const out=document.querySelector('#results'), lines=[];
+const factory=window.indexedDB, originalOpen=factory.open.bind(factory);
+const isolated='pocketday-test-'+crypto.randomUUID();
+Object.defineProperty(window,'indexedDB',{value:{open:(name,version)=>originalOpen(name==='pocketday-local-v1'?isolated:name,version)}});
+function check(label,condition){if(!condition)throw Error(label);lines.push('✓ '+label)}
+async function rejected(fn){try{await fn()}catch{return true}return false}
+try{
+ const old=emptyBook();
+ old.goals.push({id:'legacy',name:'舊目標',target:10000,saved:3700,theme:'plant'});
+ await new Promise((yes,no)=>{
+   const req=originalOpen(isolated,1);
+   req.onupgradeneeded=()=>{req.result.createObjectStore('books').add({rev:7,data:old},'personal')};
+   req.onsuccess=()=>{req.result.close();yes()};req.onerror=()=>no(req.error);
+ });
+ const books=await listBooks(),personal=await readBook('personal');
+ check('舊版本交易資料、理財目標與修訂保留',personal.rev===7&&JSON.stringify(personal.data)===JSON.stringify(old));
+ check('既有帳本與範例皆可開啟',books.length===2&&(await readBook('demo')).data.records.length>0);
+ const a=await createBook({name:'出差',icon:'出',color:'#809ac8'});
+ const b=await createBook({name:'家庭',icon:'🏠',color:'#76b3a6'});
+ await commit(a.id,0,data=>{data.goals.push(...old.goals);data.categories[0].name='出差餐費';data.records.push({id:'r',type:'expense',date:'2026-11-19',amount:12000,title:'午餐',cat:'food',invoice:'',items:[],created:1})});
+ const bData=(await readBook(b.id)).data;
+ check('帳本間收支、分類、理財目標隔離',!bData.records.length&&!bData.goals.length&&bData.categories[0].name!=='出差餐費');
+ check('並行新增同名帳本僅成功一次',(await Promise.allSettled([1,2].map(()=>createBook({name:'共同',icon:'✨',color:'#809ac8'})))).filter(r=>r.status==='fulfilled').length===1);
+ const a2=await editBook(a.id,0,{name:'海外差旅',icon:'✈️',color:'#809ac8'});
+ check('改名與圖標保留原有資料',a2.icon==='✈️'&&(await readBook(a.id)).data.records.length===1);
+ check('過期的刪除確認遭拒',await rejected(()=>deleteBook(a,1,'出差'))&&await rejected(()=>deleteBook(a2,0,'海外差旅')));
+ check('名稱不符時阻止刪除',await rejected(()=>deleteBook(a2,1,'其他')));
+ await deleteBook(a2,1,'海外差旅');
+ check('刪除後舊視窗不能讀回或重建',await rejected(()=>readBook(a.id))&&await rejected(()=>commit(a.id,1,()=>{})));
+ check('刪除不影響其他帳本',JSON.stringify((await readBook(b.id)).data)===JSON.stringify(bData));
+ for(const meta of await listBooks()){const {rev}=await readBook(meta.id);await deleteBook(meta,rev,meta.name)}
+ check('刪除最後一本後不會重新長出已刪帳本',(await listBooks()).length===0&&await rejected(()=>readBook('personal')));
+ check('空清單可再次建立帳本',Boolean((await createBook({name:'重新開始',icon:'🌱',color:'#76b3a6'})).id));
+ out.textContent=lines.join('\n')+'\n全部通過';
+}catch(error){out.textContent=lines.join('\n')+'\n失敗：'+error.stack}
+finally{factory.deleteDatabase(isolated)}
+</script></html>
