@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {parseSpeech} from '../dist/voice-parser.js';
-import {localSupport,listen} from '../dist/voice-input.js';
-import {emptyBook} from '../dist/model.js';
+import {parseSpeech} from '../docs/voice-parser.js';
+import {localSupport,listen} from '../docs/voice-input.js';
+import {emptyBook} from '../docs/model.js';
 
 const ref=new Date(2026,10,19,12);
 const parse=(line,book=emptyBook(),day=ref)=>parseSpeech(line,book,day);
