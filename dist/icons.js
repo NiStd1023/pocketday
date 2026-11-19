@@ -1,4 +1,5 @@
 const paths={
+mic:'<rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5.5 10v1a6.5 6.5 0 0 0 13 0v-1M12 17.5V22m-3 0h6"/>',stop:'<rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none"/>',
 book:'<rect x="4" y="3" width="16" height="18" rx="3"/><path d="M9 3v18m4-12h4m-4 4h3"/>',
 overview:'<rect x="3" y="3" width="7" height="7" rx="1.4"/><rect x="14" y="3" width="7" height="7" rx="1.4"/><rect x="3" y="14" width="7" height="7" rx="1.4"/><rect x="14" y="14" width="7" height="7" rx="1.4"/>',
 records:'<path d="M5 3.5 7.3 5 9.7 3l2.3 2 2.3-2 2.4 2L19 3.5v17l-2.3-1.5-2.4 2-2.3-2-2.3 2-2.4-2L5 20.5Z"/><path d="M9 9h6m-6 4h6"/>',

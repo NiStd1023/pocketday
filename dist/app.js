@@ -1,6 +1,7 @@
 import {palette,uid,money,cents,dateStr,monthNow,labelMonth,esc,emptyBook,monthly,total,breakdown,validate,readBook,commit} from './model.js';
 import {icon} from './icons.js';
 import {scanReceipt} from './scan.js';
+import {mountVoice} from './voice-dialog.js';
 
 const $=s=>document.querySelector(s),app=$('#app'),modal=$('#modal');
 const names={overview:'帳本總覽',records:'收支明細',goals:'理財目標',categories:'分類管理',backup:'資料備份'};
@@ -47,7 +48,7 @@ function categories(){return `<section class="panel"><div class="panel-top"><h2>
 function backups(){return `<div class="backup-grid"><section class="panel action-card"><span class="card-ico">${icon('download',26)}</span><h2>匯出帳本</h2><p>下載「${bookLabel(bookKey)}」的 JSON 備份，包含收支紀錄、品項、分類與理財目標。</p>${btn('export','匯出 JSON','download','primary')}</section><section class="panel action-card"><span class="card-ico mint">${icon('upload',26)}</span><h2>匯入備份</h2><p>選取小日帳備份檔，核對筆數後還原至目前帳本。</p>${btn('import','選擇備份檔','upload')}<input type="file" id="importFile" accept=".json,application/json" hidden></section></div><section class="panel note-card">${icon('shield',22)}<div><b>資料保存在這個瀏覽器</b><p>清除網站資料或更換裝置前，請先匯出備份。在共用裝置上，可以使用各自的瀏覽器使用者設定檔。</p></div></section>`}
 function navItem(k){return `<button data-act="nav" data-key="${k}" class="nav-link ${view===k?'active':''}" ${view===k?'aria-current="page"':''}>${icon(k,19)}${names[k]}</button>`}
 function render(){
- const actions=view==='overview'||view==='records'?btn('scan','掃描發票','scan')+btn('newRecord','記一筆','add','primary'):view==='goals'?btn('newGoal','新增目標','add','primary'):view==='categories'?btn('newCat','新增分類','add','primary'):'';
+ const actions=view==='overview'||view==='records'?btn('voice','語音記帳','mic')+btn('scan','掃描發票','scan')+btn('newRecord','記一筆','add','primary'):view==='goals'?btn('newGoal','新增目標','add','primary'):view==='categories'?btn('newCat','新增分類','add','primary'):'';
  app.innerHTML=`<div class="shell">${drawer?'<button class="scrim" aria-label="關閉選單" data-act="menu"></button>':''}<aside class="sidebar ${drawer?'open':''}"><a class="brand" href="#overview" data-act="nav" data-key="overview"><span class="brand-logo">${icon('book',26)}</span><span><b>小日帳</b><small>Pocketday</small></span></a><div class="nav-label">工作空間</div><nav aria-label="主要導覽">${['overview','records','goals'].map(navItem).join('')}<div class="nav-line"></div><div class="nav-label">管理工具</div>${['categories','backup'].map(navItem).join('')}</nav><div class="side-bottom"><button class="install-link" data-act="install">${icon('install',18)}安裝應用程式</button><button class="book-switch" data-act="switch"><span class="book-avatar">${icon('book',20)}</span><span><b>${bookLabel(bookKey)}</b><small>${bookKey==='demo'?'範例資料 · 可切換帳本':'個人帳本 · 裝置儲存'}</small></span>${icon('down',15)}</button></div></aside><div class="workspace"><header class="topbar"><div class="breadcrumbs">${iconBtn('menu','開啟選單','menu')}<span class="bread-desktop">${icon('book',15)} <button class="crumb-book" data-act="switch">${bookLabel(bookKey)}</button> <em>/</em></span><b>${names[view]}</b><button class="mobile-book" data-act="switch">${bookLabel(bookKey)}</button></div><div class="top-controls"><span class="local">${icon('shield',15)}本機儲存</span>${['overview','records'].includes(view)?monthBtn():''}</div></header><main id="main"><div class="page-head"><div><h1>${names[view]}</h1><p>${descriptions[view]}</p></div><div class="head-actions">${actions}</div></div>${({overview,records,goals,categories,backup:backups}[view])()}<footer><span class="footer-mark">${icon('book',14)} Pocketday</span><span>幣別 TWD · 新台幣</span></footer></main></div></div>`;
 }
 
@@ -67,20 +68,42 @@ function showSwitch(){drawer=false;render();openDialog('切換帳本',['personal
 function showMonth(){openDialog('選擇統計月份',`<div class="month-year">${iconBtn('yearBack','上一年','left')}<b>${monthYear} 年</b>${iconBtn('yearNext','下一年','right')}</div><div class="month-grid">${Array.from({length:12},(_,i)=>{const key=monthYear+'-'+String(i+1).padStart(2,'0');return `<button class="${key===month?'chosen':''}" data-act="setMonth" data-key="${key}">${i+1} 月</button>`}).join('')}</div><div class="dialog-actions">${btn('setMonth','回到本月','calendar','secondary',`data-key="${monthNow()}"`)}</div>`)}
 function catsOptions(categories,type,sel){return categories.filter(c=>c.type===type).map(c=>`<option value="${c.id}" ${c.id===sel?'selected':''}>${esc(c.name)}</option>`).join('')}
 function itemRow(i={name:'',amount:null}){return `<div class="item-line"><input class="item-name" aria-label="品項名稱" placeholder="品項名稱" required maxlength="120" value="${esc(i.name)}"><input class="item-amount" aria-label="品項小計" placeholder="小計" type="number" min="0" max="999999999.99" step=".01" required value="${i.amount==null?'':i.amount/100}">${iconBtn('dropItem','移除品項','close')}</div>`}
-async function recordForm(id='',scan=null){
- ctx=await target(!id);const r=id?byId(ctx.data.records,id):null,type=r?.type||'expense',items=r?.items||scan?.items||[],initial=r||scan||{};
- const info=scan?`<p class="form-note">已從${esc(scan.source)}帶入可辨識的欄位。請核對品項、票面總額及發票號碼，再儲存。</p>`:'';
+async function recordForm(id='',draft=null,context=null){
+ ctx=context||await target(!id);
+ const r=id?byId(ctx.data.records,id):null,initial=r||draft||{},type=initial.type||'expense',items=initial.items||[];
+ const voice=draft?.origin==='voice';
+ let info='';
+ if(voice){
+  const notes=draft.issues.length?draft.issues.join(' '):'請核對日期、金額與分類。';
+  info=`<div class="voice-review-note"><b>${icon('mic',16)} 語音原句</b><p>「${esc(draft.transcript)}」</p><small>${esc(notes)}${draft.defaulted?' 未提及日期，已帶入今天。':''}</small></div>`;
+ }else if(draft)info=`<p class="form-note">已從${esc(draft.source)}帶入可辨識的欄位。請核對品項、票面總額及發票號碼，再儲存。</p>`;
  const actions=(r?btn('deleteRecord','刪除','trash','danger'):'')+cancelBtn()+saveBtn('儲存紀錄');
- openDialog(id?'編輯收支紀錄':scan?'核對掃描結果':'記一筆',forms('recordForm',info+`<div class="book-hint">${icon('book',15)} ${bookLabel(ctx.key)}</div><input type="hidden" name="id" value="${id}"><input name="type" type="hidden" value="${type}"><div id="formType">${tabs(type,'formType',two)}</div>`+
+ openDialog(id?'編輯收支紀錄':voice?'核對語音記帳':draft?'核對掃描結果':'記一筆',forms('recordForm',info+`<div class="book-hint">${icon('book',15)} ${bookLabel(ctx.key)}</div><input type="hidden" name="id" value="${id}"><input name="type" type="hidden" value="${type}"><div id="formType">${tabs(type,'formType',two)}</div>`+
  field('項目名稱',`<input name="title" placeholder="例如：午餐、薪資入帳" required maxlength="120" value="${esc(initial.title)}">`)+
- `<div class="form-row">${field('總金額（NT$）',`<input name="amount" ${cashAttr} placeholder="0" value="${initial.amount?initial.amount/100:''}">`)}${field('日期',`<input name="date" required type="date" min="0001-01-01" max="9999-12-31" value="${initial.date||dateStr()}">`)}</div>`+
- `<div class="form-row">${field('收支分類',`<select name="cat">${catsOptions(ctx.data.categories,type,r?.cat)}</select>`)}${field('發票號碼（選填）',`<input name="invoice" maxlength="50" autocapitalize="characters" placeholder="AB-12345678" value="${esc(initial.invoice)}">`)}</div>`+
+ `<div class="form-row">${field('總金額（NT$）',`<input name="amount" ${cashAttr} placeholder="0" value="${initial.amount?initial.amount/100:''}">`)}${field('日期',`<input name="date" required type="date" min="0001-01-01" max="9999-12-31" value="${voice?initial.date:(initial.date||dateStr())}">`)}</div>`+
+ `<div class="form-row">${field('收支分類',`<select name="cat" required>${voice&&!initial.cat?'<option value="" selected disabled>請選擇分類</option>':''}${catsOptions(ctx.data.categories,type,initial.cat)}</select>`)}${field('發票號碼（選填）',`<input name="invoice" maxlength="50" autocapitalize="characters" placeholder="AB-12345678" value="${esc(initial.invoice)}">`)}</div>`+
  `<details ${items.length?'open':''}><summary>品項明細（${items.length||'選填'}）</summary><div class="line-items">${items.map(itemRow).join('')}</div>${btn('addItem','新增品項','add','soft')}<p class="helper" style="margin-top:8px">統計會採用上方的總金額，品項只計入明細。</p><p class="helper" id="itemCheck" aria-live="polite"></p></details>`,actions));itemCheck();
 }
 async function recordSubmit(f,allowDuplicate=false){const fd=new FormData(f),id=fd.get('id'),it=[...f.querySelectorAll('.item-line')].map(x=>({name:x.querySelector('.item-name').value.trim(),amount:cents(x.querySelector('.item-amount').value)}));const invoice=fd.get('invoice').trim().toUpperCase();
  if(!allowDuplicate&&invoice&&ctx.data.records.some(r=>r.id!==id&&r.invoice.replace(/[^A-Z0-9]/g,'')===invoice.replace(/[^A-Z0-9]/g,''))){const msg=f.querySelector('.form-error');msg.innerHTML=`這張發票已存在於帳本，請確認是否重複。 ${btn('confirmDuplicate','仍要儲存','','soft')}`;return}
  const record={id:id||uid(),title:fd.get('title').trim(),type:fd.get('type'),cat:fd.get('cat'),amount:cents(fd.get('amount')),date:fd.get('date'),invoice,items:it,created:id?byId(ctx.data.records,id).created:Date.now()};if(!record.title)throw Error('請輸入項目名稱。');
- const before=month;month=record.date.slice(0,7);try{await save(ctx,b=>{const idx=b.records.findIndex(x=>x.id===id);if(idx<0)b.records.push(record);else b.records[idx]=record},'已儲存至'+bookLabel(ctx.key))}catch(e){month=before;throw e}
+ await saveLedgerRecord(ctx,record);
+}
+async function saveLedgerRecord(context,record){
+ const before=month;month=record.date.slice(0,7);
+ try{await save(context,b=>{const idx=b.records.findIndex(x=>x.id===record.id);if(idx<0)b.records.push(record);else b.records[idx]=record},'已儲存至'+bookLabel(context.key))}
+ catch(e){month=before;throw e}
+}
+async function voiceEntry(){
+ const context=await target(true);
+ openDialog('語音記帳','');
+ cleanup=mountVoice(modal,{context,review:(draft,ctx)=>recordForm('',draft,ctx),saveRecord:async(draft,ctx)=>{
+  const record={id:uid(),title:draft.title,date:draft.date,type:draft.type,cat:draft.cat,amount:draft.amount,invoice:'',items:[],created:Date.now()};
+  await saveLedgerRecord(ctx,record);
+  const category=byId(ctx.data.categories,record.cat);
+  openDialog('已記入我的帳本',`<div class="voice-saved"><span class="voice-saved-icon">${icon('check',25)}</span><h3>${esc(record.title)}</h3><strong>NT$ ${money(record.amount)}</strong><p>${esc(record.date)} · ${esc(category.name)} · ${record.type==='expense'?'支出':'收入'}</p></div><div class="dialog-actions">${btn('editRecord','編輯這筆','edit','secondary',`data-id="${record.id}"`)}${btn('close','完成','','primary')}</div>`);
+ }});
+
 }
 function itemCheck(){const f=$('#recordForm'),el=$('#itemCheck');if(!f||!el)return;const items=[...f.querySelectorAll('.item-amount')],sum=items.reduce((a,i)=>a+cents(i.value||0),0);el.textContent=items.length?'品項合計 NT$ '+money(sum)+(sum===cents(f.elements.amount.value)?'，與總金額相符。':'，請核對折扣、稅額或未辨識的品項。'):''}
 function confirmDelete(kind,id,label){const actions=btn('cancelDelete','保留紀錄')+btn('doDelete','確認刪除','trash','danger',`data-key="${kind}" data-id="${id}"`);openDialog('刪除確認',`<p>確定刪除「${esc(label)}」？</p><p class="helper" style="margin:8px 0 16px">刪除後可使用先前匯出的備份還原。</p><div class="dialog-actions">${actions}</div><p class="form-error" role="alert"></p>`)}
@@ -130,7 +153,7 @@ document.addEventListener('click',async e=>{
  case 'month':monthYear=Number(month.slice(0,4));showMonth();break;case 'yearBack':monthYear=Math.max(1,monthYear-1);showMonth();break;case 'yearNext':monthYear=Math.min(9999,monthYear+1);showMonth();break;case 'setMonth':month=k;page=1;closeDialog();render();break;
  case 'chart':chartType=k;render();break;case 'gotoGoals':navigate('goals');break;case 'gotoRecords':filterType='all';filterCat='';search='';page=1;navigate('records');break;
  case 'catRecords':filterCat=id;filterType=chartType;search='';page=1;navigate('records');break;case 'typeFilter':filterType=k;filterCat='';page=1;render();break;case 'prevPage':page=Math.max(1,page-1);render();break;case 'nextPage':page++;render();break;
- case 'close':case 'cancelDelete':closeDialog();break;case 'newRecord':await recordForm();break;case 'editRecord':await recordForm(id);break;
+ case 'close':case 'cancelDelete':closeDialog();break;case 'voice':await voiceEntry();break;case 'newRecord':await recordForm();break;case 'editRecord':await recordForm(id);break;
  case 'formType':{const f=$('#recordForm');f.elements.type.value=k;$('#formType').innerHTML=tabs(k,'formType',two);f.elements.cat.innerHTML=catsOptions(ctx.data.categories,k,'');break}
  case 'addItem':{const list=modal.querySelector('.line-items');list.insertAdjacentHTML('beforeend',itemRow());list.lastElementChild.querySelector('input').focus();break}
  case 'dropItem':b.closest('.item-line').remove();itemCheck();break;case 'confirmDuplicate':{const f=$('#recordForm');if(f.reportValidity())await recordSubmit(f,true);break}
