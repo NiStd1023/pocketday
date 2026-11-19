@@ -1,0 +1,32 @@
+name: 還原小日帳首次發行版本
+on:
+  push:
+    branches: ['archive/initial-import']
+    paths: ['.github/workflows/restore.yml']
+permissions:
+  contents: write
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 讀取備份分支
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+      - name: 驗證備份、執行測試並匯入首次版本
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'd0b3b3a1700839a071ab58b0948baa54d377ec03a3d009f405b1bcfdefd08b1e  Pocketday.bundle' | sha256sum -c -
+          git bundle verify Pocketday.bundle
+          git fetch --no-tags ./Pocketday.bundle refs/heads/main:refs/remotes/backup/main refs/tags/v1.0.0:refs/tags/v1.0.0 refs/tags/v1.1.0:refs/tags/v1.1.0
+          test "$(git rev-parse refs/remotes/backup/main)" = fa59f7b9ddc262cd9fbeb1a41f25be7341d74251
+          git worktree add --detach "$RUNNER_TEMP/pocketday-verified" refs/remotes/backup/main
+          node --test "$RUNNER_TEMP/pocketday-verified/tests/voice.test.mjs"
+          git fetch origin refs/heads/main:refs/remotes/origin/main
+          initial=$(git rev-parse refs/remotes/origin/main)
+          test "$initial" = ab1e486bbe99933d3af5d135ce4c77f0116c6a47
+          git config user.name 'Pocketday Project'
+          git config user.email 'pocketday@users.noreply.github.com'
+          restored=$(git commit-tree 'refs/remotes/backup/main^{tree}' -p "$initial" -p refs/remotes/backup/main -m '匯入小日帳版本歷史與 GitHub Pages 網站')
+          git push --atomic origin "$restored:refs/heads/main" refs/tags/v1.0.0 refs/tags/v1.1.0
