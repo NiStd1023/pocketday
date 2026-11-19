@@ -1,4 +1,4 @@
-const CACHE='pocketday-shell-v2';
+const CACHE='pocketday-shell-v3';
 const ASSETS=['./','./index.html','./style.css','./app.js','./model.js','./scan.js','./icons.js','./travel.webp','./dm-sans.woff2','./icon-192.png','./icon-512.png','./manifest.webmanifest','./vendor/jsQR.js','./vendor/tesseract.min.js','./vendor/worker.min.js','./vendor/tesseract-core-lstm.wasm.js','./vendor/eng.traineddata.gz','./vendor/chi_tra.traineddata.gz'];
 self.addEventListener('install',e=>e.waitUntil((async()=>{const cache=await caches.open(CACHE);await cache.addAll(ASSETS);await self.skipWaiting()})()));
 self.addEventListener('activate',e=>e.waitUntil((async()=>{for(const k of await caches.keys())if(k.startsWith('pocketday-shell-')&&k!==CACHE)await caches.delete(k);await self.clients.claim()})()));
