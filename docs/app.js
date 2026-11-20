@@ -115,11 +115,18 @@ async function recordForm(id='',draft=null,context=null){
  if(voice){
   const notes=draft.issues.length?draft.issues.join(' '):'請核對日期、金額與分類。';
   info=`<div class="voice-review-note"><b>${icon('mic',16)} 語音原句</b><p>「${esc(draft.transcript)}」</p><small>${esc(notes)}${draft.defaulted?' 未提及日期，已帶入今天。':''}</small></div>`;
- }else if(draft)info=`<p class="form-note">已從${esc(draft.source)}帶入可辨識的欄位。請核對品項、票面總額及發票號碼，再儲存。</p>`;
+ }else if(draft){
+  const issues=draft.issues||[];
+  const note=issues.length?issues.map(esc).join(' '):'請核對品項與總金額後再儲存。';
+  info=`<p class="form-note">已從${esc(draft.source)}帶入可確認的欄位。${note}</p>`;
+  if(draft.previews?.length){
+   info+=`<details class="scan-review"><summary>對照收據影像</summary>${draft.previews.map(src=>`<img src="${esc(src)}" alt="收據上待核對的內容">`).join('')}</details>`;
+  }
+ }
  const actions=(r?btn('deleteRecord','刪除','trash','danger'):'')+cancelBtn()+saveBtn('儲存紀錄');
  openDialog(id?'編輯收支紀錄':voice?'核對語音記帳':draft?'核對掃描結果':'記一筆',forms('recordForm',info+`<div class="book-hint">${icon('book',15)} ${bookLabel(ctx.key)}</div><input type="hidden" name="id" value="${id}"><input name="type" type="hidden" value="${type}"><div id="formType">${tabs(type,'formType',two)}</div>`+
  field('項目名稱',`<input name="title" placeholder="例如：午餐、薪資入帳" required maxlength="120" value="${esc(initial.title)}">`)+
- `<div class="form-row">${field('總金額（NT$）',`<input name="amount" ${cashAttr} placeholder="0" value="${initial.amount?initial.amount/100:''}">`)}${field('日期',`<input name="date" required type="date" min="0001-01-01" max="9999-12-31" value="${voice?initial.date:(initial.date||dateStr())}">`)}</div>`+
+ `<div class="form-row">${field('總金額（NT$）',`<input name="amount" ${cashAttr} placeholder="0" value="${initial.amount?initial.amount/100:''}">`)}${field('日期',`<input name="date" required type="date" min="0001-01-01" max="9999-12-31" value="${esc(draft?initial.date:(initial.date||dateStr()))}">`)}</div>`+
  `<div class="form-row">${field('收支分類',`<select name="cat" required>${voice&&!initial.cat?'<option value="" selected disabled>請選擇分類</option>':''}${catsOptions(ctx.data.categories,type,initial.cat)}</select>`)}${field('發票號碼（選填）',`<input name="invoice" maxlength="50" autocapitalize="characters" placeholder="AB-12345678" value="${esc(initial.invoice)}">`)}</div>`+
  `<details ${items.length?'open':''}><summary>品項明細（${items.length||'選填'}）</summary><div class="line-items">${items.map(itemRow).join('')}</div>${btn('addItem','新增品項','add','soft')}<p class="helper" style="margin-top:8px">統計會採用上方的總金額，品項只計入明細。</p><p class="helper" id="itemCheck" aria-live="polite"></p></details>`,actions));itemCheck();
 }
@@ -144,7 +151,17 @@ async function voiceEntry(){
  }});
 
 }
-function itemCheck(){const f=$('#recordForm'),el=$('#itemCheck');if(!f||!el)return;const items=[...f.querySelectorAll('.item-amount')],sum=items.reduce((a,i)=>a+cents(i.value||0),0);el.textContent=items.length?'品項合計 NT$ '+money(sum)+(sum===cents(f.elements.amount.value)?'，與總金額相符。':'，請核對折扣、稅額或未辨識的品項。'):''}
+function itemCheck(){
+ const form=$('#recordForm'), note=$('#itemCheck');
+ if(!form||!note)return;
+ const fields=[...form.querySelectorAll('.item-amount')];
+ const sum=fields.reduce((amount,field)=>amount+cents(field.value||0),0);
+ note.closest('details').querySelector('summary').textContent='品項明細（'+(fields.length||'選填')+'）';
+ if(!fields.length){note.textContent='';return}
+ const value=form.elements.amount.value;
+ const check=!value?'，總金額待確認。':sum===cents(value)?'，與總金額相符。':'，請核對折扣、稅額或未辨識的品項。';
+ note.textContent='品項合計 NT$ '+money(sum)+check;
+}
 function confirmDelete(kind,id,label){const actions=btn('cancelDelete','保留紀錄')+btn('doDelete','確認刪除','trash','danger',`data-key="${kind}" data-id="${id}"`);openDialog('刪除確認',`<p>確定刪除「${esc(label)}」？</p><p class="helper" style="margin:8px 0 16px">刪除後可使用先前匯出的備份還原。</p><div class="dialog-actions">${actions}</div><p class="form-error" role="alert"></p>`)}
 async function catForm(id=''){
  ctx=await target();const c=id?byId(ctx.data.categories,id):null,type=c?.type||catType;
@@ -236,7 +253,7 @@ document.addEventListener('click',async e=>{
  case 'catRecords':filterCat=id;filterType=chartType;search='';page=1;navigate('records');break;case 'typeFilter':filterType=k;filterCat='';page=1;render();break;case 'prevPage':page=Math.max(1,page-1);render();break;case 'nextPage':page++;render();break;
  case 'close':case 'cancelDelete':closeDialog();break;case 'voice':await voiceEntry();break;case 'newRecord':await recordForm();break;case 'editRecord':await recordForm(id);break;
  case 'formType':{const f=$('#recordForm');f.elements.type.value=k;$('#formType').innerHTML=tabs(k,'formType',two);f.elements.cat.innerHTML=catsOptions(ctx.data.categories,k,'');break}
- case 'addItem':{const list=modal.querySelector('.line-items');list.insertAdjacentHTML('beforeend',itemRow());list.lastElementChild.querySelector('input').focus();break}
+ case 'addItem':{const list=modal.querySelector('.line-items');list.insertAdjacentHTML('beforeend',itemRow());list.lastElementChild.querySelector('input').focus();itemCheck();break}
  case 'dropItem':b.closest('.item-line').remove();itemCheck();break;case 'confirmDuplicate':{const f=$('#recordForm');if(f.reportValidity())await recordSubmit(f,true);break}
  case 'deleteRecord':{const rid=$('#recordForm').elements.id.value;confirmDelete('records',rid,byId(ctx.data.records,rid).title);break}
  case 'deleteGoal':confirmDelete('goals',id,byId(ctx.data.goals,id).name);break;
