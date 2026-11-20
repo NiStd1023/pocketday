@@ -1,5 +1,5 @@
-const CACHE='pocketday-shell-multi-v1.2.0';
-const ASSETS=['./','./index.html','./style.css','./app.js','./model.js','./ledger-store.js','./book-backup.js','./book-ui.js','./scan.js','./voice-parser.js','./voice-input.js','./voice-dialog.js','./icons.js','./travel.webp','./dm-sans.woff2','./icon-192.png','./icon-512.png','./manifest.webmanifest','./vendor/jsQR.js','./vendor/tesseract.min.js','./vendor/worker.min.js','./vendor/tesseract-core-lstm.wasm.js','./vendor/eng.traineddata.gz','./vendor/chi_tra.traineddata.gz'];
+const CACHE='pocketday-shell-receipt-review-v1.2.1';
+const ASSETS=['./','./index.html','./style.css','./app.js','./model.js','./ledger-store.js','./book-backup.js','./book-ui.js','./scan.js','./receipt-parser.js','./voice-parser.js','./voice-input.js','./voice-dialog.js','./icons.js','./travel.webp','./dm-sans.woff2','./icon-192.png','./icon-512.png','./manifest.webmanifest','./vendor/jsQR.js','./vendor/tesseract.min.js','./vendor/worker.min.js','./vendor/tesseract-core-lstm.wasm.js','./vendor/eng.traineddata.gz','./vendor/chi_tra.traineddata.gz'];
 self.addEventListener('install',e=>e.waitUntil((async()=>{const cache=await caches.open(CACHE);await cache.addAll(ASSETS);await self.skipWaiting()})()));
 self.addEventListener('activate',e=>e.waitUntil((async()=>{for(const k of await caches.keys())if(k.startsWith('pocketday-shell-')&&k!==CACHE)await caches.delete(k);await self.clients.claim()})()));
 self.addEventListener('fetch',e=>{const url=new URL(e.request.url);if(e.request.method!=='GET'||url.origin!==self.location.origin)return;
